@@ -26,17 +26,16 @@ stages:
         pip install -r requirements.txt
       displayName: 'Install dependencies'
 
-    # Create deployment script
-    - task: PowerShell@2
+    # Create startup script
+    - task: Bash@3
       inputs:
         targetType: 'inline'
         script: |
-          $deployScript = @"
-          cd /home/site/wwwroot
-          pip install -r requirements.txt
-          "@
-          $deployScript | Out-File -FilePath "$(Build.ArtifactStagingDirectory)\startup.sh" -Encoding UTF8
-      displayName: 'Create deployment script'
+          echo "python -m pip install --upgrade pip" > $(Build.ArtifactStagingDirectory)/startup.sh
+          echo "python -m pip install -r requirements.txt" >> $(Build.ArtifactStagingDirectory)/startup.sh
+          echo "gunicorn --bind=0.0.0.0 --timeout 600 app:app" >> $(Build.ArtifactStagingDirectory)/startup.sh
+          chmod +x $(Build.ArtifactStagingDirectory)/startup.sh
+      displayName: 'Create startup script'
 
     # Copy necessary files for deployment
     - task: CopyFiles@2
@@ -87,4 +86,4 @@ stages:
               azureSubscription: 'PredictionTimeAzure'  # Update this
               appName: '$(webAppName)'
               package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
-              startUpCommand: 'pip install -r requirements.txt && gunicorn --bind=0.0.0.0 --timeout 600 app:app'
+              startUpCommand: '/bin/bash startup.sh'

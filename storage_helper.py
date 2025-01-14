@@ -1,3 +1,5 @@
+from typing import Union
+from io import BytesIO
 from azure.storage.blob import BlobServiceClient
 import os
 
