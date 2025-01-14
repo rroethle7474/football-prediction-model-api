@@ -1,0 +1,86 @@
+
+All CSV files in features/ and training_data/
+Python cache files
+IDE-specific files
+Log files
+To use this:
+
+Create a new file called .gitignore in your project root
+Copy the content I provided above into it
+Save the file
+Run git status to verify the right files are being tracked
+If you want to ensure your features/ and training_data/ folders are created in Git (but empty), you can add empty .gitkeep files:
+
+bash
+
+Copy
+touch features/.gitkeep
+touch training_data/
+Claude can make mistakes. Please double-check responses.
+
+
+
+No file chosen
+
+
+3.5 Sonnet
+
+Choose style
+1
+
+.gitignore file for Python Flask project
+
+# Virtual Environment
+venv/
+env/
+lib/
+Scripts/
+pyvenv.cfg
+.env
+*.pyc
+__pycache__/
+.Python
+include/
+share/
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Python specific
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Local development
+*.log
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Project specific
+features/*.csv
+training_data/*.csv
+
+# Azure specific
+.azure/
+azurite/
+*.publishsettings
