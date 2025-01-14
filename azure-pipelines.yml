@@ -26,28 +26,17 @@ stages:
         pip install -r requirements.txt
       displayName: 'Install dependencies'
 
-    # Create web.config file
+    # Create deployment script
     - task: PowerShell@2
       inputs:
         targetType: 'inline'
         script: |
-          $webConfig = @"
-          <?xml version="1.0" encoding="utf-8"?>
-          <configuration>
-            <system.webServer>
-              <handlers>
-                <add name="PythonHandler" path="*" verb="*" modules="FastCgiModule" scriptProcessor="D:\Python312\python.exe|D:\Python312\Lib\site-packages\wfastcgi.py" resourceType="Unspecified" requireAccess="Script" />
-              </handlers>
-            </system.webServer>
-            <appSettings>
-              <add key="PYTHONPATH" value="D:\home\site\wwwroot" />
-              <add key="WSGI_HANDLER" value="app.app" />
-              <add key="WSGI_LOG" value="D:\home\LogFiles\wfastcgi.log" />
-            </appSettings>
-          </configuration>
+          $deployScript = @"
+          cd /home/site/wwwroot
+          pip install -r requirements.txt
           "@
-          $webConfig | Out-File -FilePath "$(Build.ArtifactStagingDirectory)\web.config" -Encoding UTF8
-      displayName: 'Create web.config'
+          $deployScript | Out-File -FilePath "$(Build.ArtifactStagingDirectory)\startup.sh" -Encoding UTF8
+      displayName: 'Create deployment script'
 
     # Copy necessary files for deployment
     - task: CopyFiles@2
@@ -98,4 +87,4 @@ stages:
               azureSubscription: 'PredictionTimeAzure'  # Update this
               appName: '$(webAppName)'
               package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
-              startUpCommand: 'gunicorn --bind=0.0.0.0 --timeout 600 app:app'
+              startUpCommand: 'pip install -r requirements.txt && gunicorn --bind=0.0.0.0 --timeout 600 app:app'
