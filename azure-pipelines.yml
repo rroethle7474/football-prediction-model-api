@@ -1,0 +1,87 @@
+trigger:
+  - main  # or whichever branch you want to trigger deployments from
+
+variables:
+  pythonVersion: '3.12'
+  webAppName: 'prediction-time-api-v1'
+  environmentName: 'production'
+
+stages:
+- stage: Build
+  displayName: 'Build and Test'
+  jobs:
+  - job: Build
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(pythonVersion)'
+        architecture: 'x64'
+      displayName: 'Use Python $(pythonVersion)'
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install wheel setuptools
+        pip install -r requirements.txt
+      displayName: 'Install dependencies'
+
+    # Copy necessary files for deployment
+    - task: CopyFiles@2
+      inputs:
+        SourceFolder: '$(System.DefaultWorkingDirectory)'
+        Contents: |
+          **/*.py
+          requirements.txt
+          .env.example
+          features/.gitkeep
+          training_data/.gitkeep
+        TargetFolder: '$(Build.ArtifactStagingDirectory)'
+      displayName: 'Copy deployment files'
+
+    # Create web.config for Gunicorn
+    - task: FileTransform@2
+      inputs:
+        folderPath: '$(Build.ArtifactStagingDirectory)'
+        xmlTransformationRules: ''
+        jsonTargetFiles: ''
+        jsonTransformationRules: ''
+      displayName: 'Add web.config'
+
+    # Archive the files
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: '$(Build.ArtifactStagingDirectory)'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+        replaceExistingArchive: true
+      displayName: 'Archive files'
+
+    # Publish the artifact
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+        ArtifactName: 'drop'
+        publishLocation: 'Container'
+      displayName: 'Publish artifact'
+
+- stage: Deploy
+  displayName: 'Deploy to Azure Web App'
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - deployment: Deploy
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: $(environmentName)
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: 'Your-Azure-Service-Connection'  # Update this
+              appName: '$(webAppName)'
+              package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
+              startUpCommand: 'gunicorn --bind=0.0.0.0 --timeout 600 app:app'
