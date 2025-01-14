@@ -1,5 +1,5 @@
 trigger:
-  - main  # or whichever branch you want to trigger deployments from
+  - main
 
 variables:
   pythonVersion: '3.12'
@@ -26,6 +26,29 @@ stages:
         pip install -r requirements.txt
       displayName: 'Install dependencies'
 
+    # Create web.config file
+    - task: PowerShell@2
+      inputs:
+        targetType: 'inline'
+        script: |
+          $webConfig = @"
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <system.webServer>
+              <handlers>
+                <add name="PythonHandler" path="*" verb="*" modules="FastCgiModule" scriptProcessor="D:\Python312\python.exe|D:\Python312\Lib\site-packages\wfastcgi.py" resourceType="Unspecified" requireAccess="Script" />
+              </handlers>
+            </system.webServer>
+            <appSettings>
+              <add key="PYTHONPATH" value="D:\home\site\wwwroot" />
+              <add key="WSGI_HANDLER" value="app.app" />
+              <add key="WSGI_LOG" value="D:\home\LogFiles\wfastcgi.log" />
+            </appSettings>
+          </configuration>
+          "@
+          $webConfig | Out-File -FilePath "$(Build.ArtifactStagingDirectory)\web.config" -Encoding UTF8
+      displayName: 'Create web.config'
+
     # Copy necessary files for deployment
     - task: CopyFiles@2
       inputs:
@@ -38,15 +61,6 @@ stages:
           training_data/.gitkeep
         TargetFolder: '$(Build.ArtifactStagingDirectory)'
       displayName: 'Copy deployment files'
-
-    # Create web.config for Gunicorn
-    - task: FileTransform@2
-      inputs:
-        folderPath: '$(Build.ArtifactStagingDirectory)'
-        xmlTransformationRules: ''
-        jsonTargetFiles: ''
-        jsonTransformationRules: ''
-      displayName: 'Add web.config'
 
     # Archive the files
     - task: ArchiveFiles@2
