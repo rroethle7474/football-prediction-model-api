@@ -81,7 +81,7 @@ stages:
           steps:
           - task: AzureWebApp@1
             inputs:
-              azureSubscription: 'Your-Azure-Service-Connection'  # Update this
+              azureSubscription: 'PredictionTimeAzure'  # Update this
               appName: '$(webAppName)'
               package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
               startUpCommand: 'gunicorn --bind=0.0.0.0 --timeout 600 app:app'
