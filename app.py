@@ -495,11 +495,37 @@ class NFLPredictor:
                 use_auth_token=self.hf_token
             )
             
-            model_names = [model.modelId.split('/')[-1] for model in models]
+            model_info = []
+            for model in models:
+                model_name = model.modelId.split('/')[-1]
+                try:
+                    # Get the model card/README content
+                    readme_info = self.hf_api.model_info(
+                        repo_id=f"{self.hf_username}/{model_name}",
+                        token=self.hf_token
+                    )
+                    
+                    model_info.append({
+                        "name": model_name,
+                        "description": readme_info.cardData.get("model-index") or [],
+                        "tags": model.tags,
+                        "lastModified": model.lastModified,
+                        "readme": readme_info.readme  # This contains the README content
+                    })
+                except Exception as e:
+                    print(f"Error fetching info for model {model_name}: {str(e)}")
+                    # Still include the model but with minimal information
+                    model_info.append({
+                        "name": model_name,
+                        "description": [],
+                        "tags": model.tags,
+                        "lastModified": model.lastModified,
+                        "readme": None
+                    })
             
             return {
                 "status": "success",
-                "models": model_names
+                "models": model_info
             }
             
         except Exception as e:
