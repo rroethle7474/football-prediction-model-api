@@ -34,10 +34,16 @@ def requires_auth(f):
         if not auth_password:
             return jsonify({"error": "Server authentication not configured"}), 500
             
+        # Handle different request types
         if request.method == 'GET':
             provided_password = request.args.get('password')
         else:
-            provided_password = request.json.get('password') if request.is_json else None
+            # Check form data first (for multipart/form-data requests)
+            provided_password = request.form.get('password')
+            
+            # If not in form data, check JSON (for application/json requests)
+            if provided_password is None and request.is_json:
+                provided_password = request.json.get('password')
             
         if not provided_password:
             return jsonify({"error": "No password provided"}), 401
@@ -71,9 +77,11 @@ class NFLPredictor:
     def _read_csv_file(self, container: str, filename: str) -> pd.DataFrame:
         """Read CSV file from either Azure Storage or local filesystem"""
         if USE_AZURE_STORAGE:
+            print("Downloading file from Azure Storage")
             content = storage_helper.download_file(container, filename)
             return pd.read_csv(BytesIO(content))
         else:
+            print("Downloading file from local filesystem")
             # For local storage, use the directory structure from container parameter
             filepath = os.path.join(container, filename)
             return pd.read_csv(filepath)
@@ -81,8 +89,10 @@ class NFLPredictor:
     def _save_csv_file(self, container: str, filename: str, file_content) -> None:
         """Save CSV file to either Azure Storage or local filesystem"""
         if USE_AZURE_STORAGE:
+            print("Uploading file to Azure Storage")
             storage_helper.upload_file(container, filename, file_content)
         else:
+            print("Uploading file to local filesystem")
             # Ensure directory exists
             os.makedirs(container, exist_ok=True)
             filepath = os.path.join(container, filename)
@@ -136,7 +146,7 @@ class NFLPredictor:
         
         return data
     
-    def train_model(self, model_name: str, training_split: float = 0.2) -> Dict[str, Any]:
+    def train_model(self, model_name: str, training_split: float = 0.2, model_description: str = '') -> Dict[str, Any]:
         try:
             print("Starting train_model method")
             
@@ -147,7 +157,6 @@ class NFLPredictor:
                 }
 
             self._ensure_login()
-            print("Login successful")
 
             try:
                 print(f"Checking if model {model_name} exists")
@@ -174,6 +183,23 @@ class NFLPredictor:
                 print(f"Repository creation error: {str(repo_error)}")
                 return {"status": "error", "message": f"Error creating repository: {str(repo_error)}"}
 
+            try:
+                readme_filename = "README.md"
+                with open(readme_filename, "w", encoding="utf-8") as f:
+                    f.write(model_description)  # Write the model_description to README.md
+            
+                # Upload README.md to Hugging Face
+                self.hf_api.upload_file(
+                    path_or_fileobj=readme_filename,
+                    path_in_repo=readme_filename,
+                    repo_id=f"{self.hf_username}/{model_name}",
+                    repo_type="model"
+                )
+                os.remove(readme_filename)  # Clean up local file
+            except Exception as readme_error:
+                print(f"Model card upload failed: {str(readme_error)}")
+                raise  # This will trigger the cleanup in the outer exception handler 
+                      
             print("Loading and preprocessing data")
             team_stats = self.load_and_preprocess_data()
             actual_results = self._load_actual_results()
@@ -206,7 +232,6 @@ class NFLPredictor:
             
             joblib.dump(model, model_filename)
             joblib.dump(scaler, scaler_filename)
-            print("ABOUT TO UPLOAD TO HUGGINGFACE")
 
             self.hf_api.upload_file(
                 path_or_fileobj=model_filename,
@@ -337,9 +362,7 @@ class NFLPredictor:
     def _prepare_features(self, actual_results: pd.DataFrame, team_stats: pd.DataFrame) -> pd.DataFrame:
         try:
             print("Preparing features")
-            print("Team stats columns:", team_stats.columns)
-            print("Actual results columns:", actual_results.columns)
-            
+
             features = pd.DataFrame()
             
             for idx, row in actual_results.iterrows():
@@ -355,8 +378,6 @@ class NFLPredictor:
                     
                     team_data = team_stats[team_stats['Team'] == team].iloc[0]
                     opponent_data = team_stats[team_stats['Team'] == opponent].iloc[0]
-                    
-                    print(f"IsHomeTeam value: {row['IsHomeTeam']}, type: {type(row['IsHomeTeam'])}")
                     
                     feature_row = {
                         # Team offensive metrics
@@ -603,12 +624,10 @@ def predict():
 @app.route('/trainModel', methods=['POST'])
 @requires_auth
 def train_model():
-    print("TRAINING MODEL")
     data = request.get_json()
-    print("DATA: ", data)
     model_name = data.get('modelName')
     training_split = data.get('trainingSplit', 0.2)
-    print("TRAINING SPLIT: ", training_split)
+    model_description = data.get('modelDescription', '') 
     
     if not model_name:
         return jsonify({"error": "Missing modelName parameter"}), 400
@@ -620,7 +639,7 @@ def train_model():
     except (TypeError, ValueError):
         return jsonify({"error": "trainingSplit must be a valid number between 0 and 1"}), 400
     
-    result = predictor.train_model(model_name, training_split)
+    result = predictor.train_model(model_name, training_split,model_description=model_description)
     return jsonify(result)
 
 @app.route('/updateStats', methods=['POST'])
