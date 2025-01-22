@@ -3,7 +3,7 @@ from flask_cors import CORS
 from typing import Dict, Any
 import pandas as pd
 import numpy as np
-from huggingface_hub import HfApi, login, hf_hub_download
+from huggingface_hub import HfApi, ModelCard, login, hf_hub_download
 from huggingface_hub.utils import RepositoryNotFoundError
 import os
 from dotenv import load_dotenv
@@ -489,12 +489,10 @@ class NFLPredictor:
     def get_user_models(self) -> Dict[str, Any]:
         try:
             self._ensure_login()
-            
             models = self.hf_api.list_models(
                 author=self.hf_username,
                 use_auth_token=self.hf_token
             )
-            
             model_info = []
             for model in models:
                 model_name = model.modelId.split('/')[-1]
@@ -504,13 +502,14 @@ class NFLPredictor:
                         repo_id=f"{self.hf_username}/{model_name}",
                         token=self.hf_token
                     )
-                    
+                    card = ModelCard.load(model.modelId)
+
                     model_info.append({
                         "name": model_name,
-                        "description": readme_info.cardData.get("model-index") or [],
+                        "description": [],
                         "tags": model.tags,
                         "lastModified": model.lastModified,
-                        "readme": readme_info.readme  # This contains the README content
+                        "readme": card.content if card.content else None
                     })
                 except Exception as e:
                     print(f"Error fetching info for model {model_name}: {str(e)}")
@@ -522,7 +521,7 @@ class NFLPredictor:
                         "lastModified": model.lastModified,
                         "readme": None
                     })
-            
+                    
             return {
                 "status": "success",
                 "models": model_info
