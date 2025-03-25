@@ -63,12 +63,14 @@ Production URL found for web found here: https://www.jclleague.com/
 5. **Run the application**
    ```bash
    # For development
+   python app.py
+   or
    flask run --debug
    
    # For production
    gunicorn app:app
    ```
-
+  swagger page can be found using /swagger
 ## Technologies Used
 
 This API is built with the following technologies and packages:

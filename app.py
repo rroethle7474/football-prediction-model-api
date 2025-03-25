@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_restx import Api, Resource, fields
 from typing import Dict, Any
 import pandas as pd
 import numpy as np
@@ -27,6 +28,37 @@ load_dotenv()
 storage_helper = AzureStorageHelper()
 USE_AZURE_STORAGE = os.getenv('USE_AZURE_STORAGE', 'True').lower() == 'true'
 
+# Initialize Flask app with Swagger UI
+app = Flask(__name__)
+CORS(app)
+api = Api(app, version='1.0', 
+          title='Football Prediction Model API',
+          description='API for predicting NFL game statistics using machine learning models',
+          doc='/swagger')  # This will host the Swagger UI at /swagger
+
+# Define request/response models for Swagger
+prediction_input = api.model('PredictionInput', {
+    'home_team': fields.String(required=True, description='Name of the home team'),
+    'away_team': fields.String(required=True, description='Name of the away team'),
+    'model_name': fields.String(required=True, description='Name of the model to use for prediction')
+})
+
+training_input = api.model('TrainingInput', {
+    'model_name': fields.String(required=True, description='Name for the new model'),
+    'training_split': fields.Float(required=False, default=0.2, description='Training/test split ratio'),
+    'model_description': fields.String(required=False, description='Description of the model'),
+    'password': fields.String(required=True, description='API password for authentication')
+})
+
+auth_input = api.model('AuthInput', {
+    'password': fields.String(required=True, description='API password for authentication')
+})
+
+file_upload_input = api.model('FileUploadInput', {
+    'file': fields.Raw(required=True, description='CSV file to upload'),
+    'password': fields.String(required=True, description='API password for authentication')
+})
+
 def requires_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -53,9 +85,6 @@ def requires_auth(f):
             
         return f(*args, **kwargs)
     return decorated
-
-app = Flask(__name__)
-CORS(app)
 
 class NFLPredictor:
     def __init__(self):
@@ -606,255 +635,196 @@ class NFLPredictor:
 
 predictor = NFLPredictor()
 
-@app.route('/predict', methods=['POST'])
-def predict():
-    data = request.get_json()
-    home_team = data.get('homeTeam')
-    away_team = data.get('awayTeam')
-    model_name = data.get('modelName')
-    print("HOME_TEAM: ", home_team)
-    print("AWAY_TEAM: ", away_team)
-    print("MODEL_NAME: ", model_name)
-    if not all([home_team, away_team, model_name]):
-        return jsonify({"error": "Missing required parameters"}), 400
-    
-    result = predictor.predict(home_team, away_team, model_name)
-    return jsonify(result)
+# Create namespaces for API organization
+main_ns = api.namespace('', description='Main operations')
+stats_ns = api.namespace('', description='Statistics operations')
+file_ns = api.namespace('', description='File upload operations')
 
-@app.route('/trainModel', methods=['POST'])
-@requires_auth
-def train_model():
-    data = request.get_json()
-    model_name = data.get('modelName')
-    training_split = data.get('trainingSplit', 0.2)
-    model_description = data.get('modelDescription', '') 
-    
-    if not model_name:
-        return jsonify({"error": "Missing modelName parameter"}), 400
-    
-    try:
-        training_split = float(training_split)
-        if not 0 < training_split < 1:
-            return jsonify({"error": "trainingSplit must be between 0 and 1"}), 400
-    except (TypeError, ValueError):
-        return jsonify({"error": "trainingSplit must be a valid number between 0 and 1"}), 400
-    
-    result = predictor.train_model(model_name, training_split,model_description=model_description)
-    return jsonify(result)
+@main_ns.route('/predict')
+class PredictEndpoint(Resource):
+    @main_ns.expect(prediction_input)
+    @main_ns.doc(description='Get predictions for a game between two teams')
+    def post(self):
+        data = request.json
+        return predictor.predict(data['home_team'], data['away_team'], data['model_name'])
 
-@app.route('/updateStats', methods=['POST'])
-@requires_auth
-def update_stats():
-    result = predictor.update_team_stats()
-    return jsonify(result)
+@main_ns.route('/trainModel')
+class TrainModelEndpoint(Resource):
+    @main_ns.expect(training_input)
+    @main_ns.doc(description='Train a new prediction model')
+    @requires_auth
+    def post(self):
+        data = request.json
+        return predictor.train_model(
+            data['model_name'],
+            data.get('training_split', 0.2),
+            data.get('model_description', '')
+        )
 
-@app.route('/statsStatus', methods=['GET'])
-def stats_status():
-    result = predictor.get_team_stats()
-    return jsonify(result)
+@stats_ns.route('/updateStats')
+class UpdateStatsEndpoint(Resource):
+    @stats_ns.expect(auth_input)
+    @stats_ns.doc(description='Update team statistics')
+    @requires_auth
+    def post(self):
+        return predictor.update_team_stats()
 
-@app.route('/models', methods=['GET'])
-def get_models():
-    result = predictor.get_user_models()
-    return jsonify(result)
+@stats_ns.route('/statsStatus')
+class StatsStatusEndpoint(Resource):
+    @stats_ns.doc(description='Get status of loaded team statistics')
+    def get(self):
+        return predictor.get_team_stats()
 
-@app.route('/clearCache', methods=['POST'])
-@requires_auth
-def clear_cache():
-    result = predictor.clear_cache()
-    return jsonify(result)
+@main_ns.route('/models')
+class ModelsEndpoint(Resource):
+    @main_ns.doc(description='List all available models')
+    def get(self):
+        return predictor.get_user_models()
 
-@app.route('/deleteModel', methods=['POST'])
-@requires_auth
-def delete_model():
-    data = request.get_json()
-    model_name = data.get('modelName')
-    
-    if not model_name:
-        return jsonify({
-                "status": "error",
-                "message": "No modelName parameter provided"
-            })
-    
-    result = predictor.delete_model(model_name)
-    return jsonify(result)
+@main_ns.route('/clearCache')
+class ClearCacheEndpoint(Resource):
+    @main_ns.expect(auth_input)
+    @main_ns.doc(description='Clear data caches')
+    @requires_auth
+    def post(self):
+        return predictor.clear_cache()
 
-@app.route('/savePassingDefense', methods=['POST'])
-@requires_auth
-def save_passing_defense():
-    try:
+@main_ns.route('/deleteModel')
+class DeleteModelEndpoint(Resource):
+    @main_ns.expect(auth_input)
+    @main_ns.doc(description='Delete a trained model')
+    @requires_auth
+    def post(self):
+        data = request.json
+        return predictor.delete_model(data.get('model_name'))
+
+@file_ns.route('/savePassingDefense')
+class SavePassingDefenseEndpoint(Resource):
+    @file_ns.expect(file_upload_input)
+    @file_ns.doc(description='Upload passing defense statistics CSV')
+    @requires_auth
+    def post(self):
         if 'file' not in request.files:
-            return jsonify({"error": "No file provided"}), 400
-            
+            return {"status": "error", "message": "No file provided"}, 400
         file = request.files['file']
         if file.filename == '':
-            return jsonify({"error": "No file selected"}), 400
-            
-        if not file.filename.endswith('.csv'):
-            return jsonify({"error": "File must be a CSV"}), 400
+            return {"status": "error", "message": "No file selected"}, 400
         
         predictor._save_csv_file('features', 'PassingDefense.csv', file)
         predictor.clear_cache()
-        
-        return jsonify({"status": "success", "message": "PassingDefense.csv updated successfully"})
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return {"status": "success", "message": "File uploaded successfully"}
 
-@app.route('/savePassingOffenseYards', methods=['POST'])
-@requires_auth
-def save_passing_offense_yards():
-    try:
+@file_ns.route('/savePassingOffenseYards')
+class SavePassingOffenseYardsEndpoint(Resource):
+    @file_ns.expect(file_upload_input)
+    @file_ns.doc(description='Upload passing offense yards statistics CSV')
+    @requires_auth
+    def post(self):
         if 'file' not in request.files:
-            return jsonify({"error": "No file provided"}), 400
-            
+            return {"status": "error", "message": "No file provided"}, 400
         file = request.files['file']
         if file.filename == '':
-            return jsonify({"error": "No file selected"}), 400
-            
-        if not file.filename.endswith('.csv'):
-            return jsonify({"error": "File must be a CSV"}), 400
-            
+            return {"status": "error", "message": "No file selected"}, 400
+        
         predictor._save_csv_file('features', 'PassingOffense-Yards.csv', file)
         predictor.clear_cache()
-        
-        return jsonify({"status": "success", "message": "PassingOffense-Yards.csv updated successfully"})
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return {"status": "success", "message": "File uploaded successfully"}
 
-@app.route('/savePassingOffenseAttempts', methods=['POST'])
-@requires_auth
-def save_passing_offense_attempts():
-    try:
+@file_ns.route('/savePassingOffenseAttempts')
+class SavePassingOffenseAttemptsEndpoint(Resource):
+    @file_ns.expect(file_upload_input)
+    @file_ns.doc(description='Upload passing offense attempts statistics CSV')
+    @requires_auth
+    def post(self):
         if 'file' not in request.files:
-            return jsonify({"error": "No file provided"}), 400
-            
+            return {"status": "error", "message": "No file provided"}, 400
         file = request.files['file']
         if file.filename == '':
-            return jsonify({"error": "No file selected"}), 400
-            
-        if not file.filename.endswith('.csv'):
-            return jsonify({"error": "File must be a CSV"}), 400
-            
+            return {"status": "error", "message": "No file selected"}, 400
+        
         predictor._save_csv_file('features', 'PassingOffense-Attempts.csv', file)
         predictor.clear_cache()
-        
-        return jsonify({"status": "success", "message": "PassingOffense-Attempts.csv updated successfully"})
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return {"status": "success", "message": "File uploaded successfully"}
 
-@app.route('/saveRushingDefense', methods=['POST'])
-@requires_auth
-def save_rushing_defense():
-    try:
+@file_ns.route('/saveRushingDefense')
+class SaveRushingDefenseEndpoint(Resource):
+    @file_ns.expect(file_upload_input)
+    @file_ns.doc(description='Upload rushing defense statistics CSV')
+    @requires_auth
+    def post(self):
         if 'file' not in request.files:
-            return jsonify({"error": "No file provided"}), 400
-            
+            return {"status": "error", "message": "No file provided"}, 400
         file = request.files['file']
         if file.filename == '':
-            return jsonify({"error": "No file selected"}), 400
-            
-        if not file.filename.endswith('.csv'):
-            return jsonify({"error": "File must be a CSV"}), 400
-            
+            return {"status": "error", "message": "No file selected"}, 400
+        
         predictor._save_csv_file('features', 'RushingDefense.csv', file)
         predictor.clear_cache()
-        
-        return jsonify({"status": "success", "message": "RushingDefense.csv updated successfully"})
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return {"status": "success", "message": "File uploaded successfully"}
 
-@app.route('/saveRushingOffenseYards', methods=['POST'])
-@requires_auth
-def save_rushing_offense_yards():
-    try:
+@file_ns.route('/saveRushingOffenseYards')
+class SaveRushingOffenseYardsEndpoint(Resource):
+    @file_ns.expect(file_upload_input)
+    @file_ns.doc(description='Upload rushing offense yards statistics CSV')
+    @requires_auth
+    def post(self):
         if 'file' not in request.files:
-            return jsonify({"error": "No file provided"}), 400
-            
+            return {"status": "error", "message": "No file provided"}, 400
         file = request.files['file']
         if file.filename == '':
-            return jsonify({"error": "No file selected"}), 400
-            
-        if not file.filename.endswith('.csv'):
-            return jsonify({"error": "File must be a CSV"}), 400
-            
+            return {"status": "error", "message": "No file selected"}, 400
+        
         predictor._save_csv_file('features', 'RushingOffense-Yards.csv', file)
         predictor.clear_cache()
-        
-        return jsonify({"status": "success", "message": "RushingOffense-Yards.csv updated successfully"})
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return {"status": "success", "message": "File uploaded successfully"}
 
-@app.route('/saveRushingOffenseAttempts', methods=['POST'])
-@requires_auth
-def save_rushing_offense_attempts():
-    try:
+@file_ns.route('/saveRushingOffenseAttempts')
+class SaveRushingOffenseAttemptsEndpoint(Resource):
+    @file_ns.expect(file_upload_input)
+    @file_ns.doc(description='Upload rushing offense attempts statistics CSV')
+    @requires_auth
+    def post(self):
         if 'file' not in request.files:
-            return jsonify({"error": "No file provided"}), 400
-            
+            return {"status": "error", "message": "No file provided"}, 400
         file = request.files['file']
         if file.filename == '':
-            return jsonify({"error": "No file selected"}), 400
-            
-        if not file.filename.endswith('.csv'):
-            return jsonify({"error": "File must be a CSV"}), 400
-            
+            return {"status": "error", "message": "No file selected"}, 400
+        
         predictor._save_csv_file('features', 'RushingOffense-Attempts.csv', file)
         predictor.clear_cache()
-        
-        return jsonify({"status": "success", "message": "RushingOffense-Attempts.csv updated successfully"})
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return {"status": "success", "message": "File uploaded successfully"}
 
-@app.route('/saveTimeOfPossession', methods=['POST'])
-@requires_auth
-def save_time_of_possession():
-    try:
+@file_ns.route('/saveTimeOfPossession')
+class SaveTimeOfPossessionEndpoint(Resource):
+    @file_ns.expect(file_upload_input)
+    @file_ns.doc(description='Upload time of possession statistics CSV')
+    @requires_auth
+    def post(self):
         if 'file' not in request.files:
-            return jsonify({"error": "No file provided"}), 400
-            
+            return {"status": "error", "message": "No file provided"}, 400
         file = request.files['file']
         if file.filename == '':
-            return jsonify({"error": "No file selected"}), 400
-            
-        if not file.filename.endswith('.csv'):
-            return jsonify({"error": "File must be a CSV"}), 400
-            
+            return {"status": "error", "message": "No file selected"}, 400
+        
         predictor._save_csv_file('features', 'TOP.csv', file)
         predictor.clear_cache()
-        
-        return jsonify({"status": "success", "message": "TOP.csv updated successfully"})
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    
-@app.route('/saveActualResults', methods=['POST'])
-@requires_auth
-def save_actual_results():
-    try:
-        print("SAVING ACTUAL RESULTS")
+        return {"status": "success", "message": "File uploaded successfully"}
+
+@file_ns.route('/saveActualResults')
+class SaveActualResultsEndpoint(Resource):
+    @file_ns.expect(file_upload_input)
+    @file_ns.doc(description='Upload actual game results CSV')
+    @requires_auth
+    def post(self):
         if 'file' not in request.files:
-            return jsonify({"error": "No file provided"}), 400
-            
+            return {"status": "error", "message": "No file provided"}, 400
         file = request.files['file']
         if file.filename == '':
-            return jsonify({"error": "No file selected"}), 400
-            
-        if not file.filename.endswith('.csv'):
-            return jsonify({"error": "File must be a CSV"}), 400
-            
+            return {"status": "error", "message": "No file selected"}, 400
+        
         predictor._save_csv_file('training_data', 'ActualResults.csv', file)
         predictor.clear_cache()
-        
-        return jsonify({"status": "success", "message": "ActualResults.csv updated successfully"})
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return {"status": "success", "message": "File uploaded successfully"}
 
 if __name__ == '__main__':
     app.run(debug=True)
